@@ -1,0 +1,124 @@
+
+MODEL:
+  META_ARCHITECTURE: Baseline_vit_HiHR
+  META_MODEL: backbone
+  PIXEL_MEAN: [127.5, 127.5, 127.5]
+  PIXEL_STD: [127.5, 127.5, 127.5]
+#  FREEZE_LAYERS: ["^text_encoder"] #"backbone_semantic.token_embedding","backbone_semantic.positional_embedding","backbone_semantic.transformer","backbone_semantic.ln_final","backbone_semantic.text_projection"
+#  MOMENTUM: 0.985
+
+  BACKBONE:
+    NAME: build_clip_vit_backbone_hqformer
+    BACKBONE_TYPE: ViT-B-16
+    PRETRAIN: True
+    PRETRAIN_PATH: /yqw/checkpoints/torch/clip
+    VISION_STRIDE_SIZE: 16
+    FEAT_DIM: 512
+    NORM: BN
+    WITH_IBN: False
+    WITH_SE: False
+    WITH_NL: False
+    WITH_VIEW: False #TRUE #view decoupling
+    WITH_FUSION: True #TRUE #view decoupling
+    WITH_HIERARCHY: True #TRUE #view decoupling
+    SCALING_FACTOR_I1: 0.5 #0.2677
+    SCALING_FACTOR_I2: 2.0 #1.000
+    CURV_INIT: 1.0 #0.25 {0.1, 0.5, 1.0} 0.1
+    SELECTED_LAYER: [ 5,8,12 ]  # 0,1,2,3,4,5,6,7,8,9,10,11 4, 7, 11 9, 10, 11
+
+  HEADS:
+    NAME: EmbeddingHead
+    NORM: BN
+    WITH_BNNECK: True
+    POOL_LAYER: Identity
+    NECK_FEAT: before
+    CLS_LAYER: Linear
+
+  LOSSES:
+    NAME: ("CrossEntropyLoss", "TripletLoss") #,"SupConLoss","PrototypeLoss"
+
+    CE:
+      EPSILON: 0.
+      SCALE: 1.
+      # view-related learning
+      VIEW_ID: True
+      VIEW_OREG: True
+      VIEW_LAMBDA: 0.001
+
+    TRI:
+      MARGIN: 0.0
+      HARD_MINING: True
+      NORM_FEAT: False
+      SCALE: 1.
+
+    SUP:
+      TEMPERATURE: 1.0
+
+    PRO:
+      MARGIN: 0.0
+      HARD_MINING: True
+      NORM_FEAT: False
+      SCALE: 10.
+      ALIGN_CHOICE: SE #MSE
+
+
+INPUT:
+  SIZE_TRAIN: [ 256, 128 ]
+  SIZE_TEST: [ 256, 128 ]
+
+  REA:
+    ENABLED: True
+    PROB: 0.5
+
+  FLIP:
+    ENABLED: True
+
+  PADDING:
+    ENABLED: True
+
+DATALOADER:
+  SAMPLER_TRAIN: NaiveIdentitySampler
+  NUM_INSTANCE: 4
+  NUM_WORKERS: 8
+
+SOLVER:
+  AMP:
+    ENABLED: True
+  OPT: Adam
+  MAX_EPOCH: 60
+  BASE_LR: 0.00035
+  HEADS_LR_FACTOR: 1.0 #2.0
+  WEIGHT_DECAY: 0.0001
+  WEIGHT_DECAY_BIAS: 0.0001
+  BIAS_LR_FACTOR: 2.0
+  IMS_PER_BATCH: 64
+
+  SCHED: MultiStepLR #CosineAnnealingLR
+  ETA_MIN_LR: 0.000005
+
+  WARMUP_METHOD: linear
+  WARMUP_FACTOR: 0.1
+  WARMUP_ITERS: 100
+
+  FREEZE_ITERS: 100000000
+  CLIP_GRADIENTS:
+    ENABLED: True
+    CLIP_VALUE: 5.0
+
+  CHECKPOINT_PERIOD: 1
+  STEPS: [ 20, 30 ]
+
+TEST:
+  EVAL_PERIOD: 1 #5
+  IMS_PER_BATCH:  384
+  METRIC: "cosine" #"hyperbolic"
+
+CUDNN_BENCHMARK: True
+
+DATASETS:
+  NAMES: ("G2APS_ReID",)
+  TESTS: ("G2APS_ReID_A2G", "G2APS_ReID_G2A")
+  CAMERANMU: 2
+  VIEWNMU: 2
+OUTPUT_DIR: logs/G2APS_ReID/HiHR
+

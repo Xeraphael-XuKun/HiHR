@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+
+# virtual env
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs & experiment outputs
+runs/
+wandb/
+logs/
+outputs/
+checkpoints/
+*.log
+
+# model weights
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# data
+#data/
+#datasets/
+*.npy
+*.npz
+
+# system
+.DS_Store
+
+#caption
+tools/TexTGenerate/
+requirements.txt
