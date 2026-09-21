@@ -18,7 +18,12 @@ def _rank_indices(qf, gf, chunk_size):
     return np.concatenate(indices, axis=0)
 
 
-def _evaluate_indices(indices, q_pids, g_pids, q_camids, g_camids, max_rank=50):
+def _empty_result(max_rank):
+    return np.full(int(max_rank), np.nan, dtype=np.float32), float("nan"), 0
+
+
+def _evaluate_indices(indices, q_pids, g_pids, q_camids, g_camids, max_rank=50,
+                      allow_no_valid=False):
     matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
     all_cmc = []
     all_ap = []
@@ -39,6 +44,8 @@ def _evaluate_indices(indices, q_pids, g_pids, q_camids, g_camids, max_rank=50):
         all_ap.append((precision * raw_cmc).sum() / num_rel)
 
     if not all_cmc:
+        if allow_no_valid:
+            return _empty_result(max_rank)
         raise RuntimeError("No valid WHU-MARS query remains after same-camera filtering")
     return (
         np.asarray(all_cmc, dtype=np.float32).mean(axis=0),
@@ -49,7 +56,7 @@ def _evaluate_indices(indices, q_pids, g_pids, q_camids, g_camids, max_rank=50):
 
 @torch.no_grad()
 def evaluate_whu_asreid(qf, gf, q_pids, g_pids, q_camids, g_camids,
-                        max_rank=50, chunk_size=4000):
+                        max_rank=50, chunk_size=4000, allow_no_valid=False):
     """UAD-compatible WHU-MARS AS-ReID evaluation.
 
     Features are L2-normalized, ranked by squared Euclidean distance, and every
@@ -61,5 +68,13 @@ def evaluate_whu_asreid(qf, gf, q_pids, g_pids, q_camids, g_camids,
     g_pids = np.asarray(g_pids)
     q_camids = np.asarray(q_camids)
     g_camids = np.asarray(g_camids)
+    if qf.shape[0] == 0 or gf.shape[0] == 0:
+        if allow_no_valid:
+            return _empty_result(max_rank)
+        raise RuntimeError("WHU-MARS query and gallery must both be non-empty")
     indices = _rank_indices(qf, gf, int(chunk_size))
-    return _evaluate_indices(indices, q_pids, g_pids, q_camids, g_camids, max_rank=max_rank)
+    return _evaluate_indices(
+        indices, q_pids, g_pids, q_camids, g_camids,
+        max_rank=max_rank,
+        allow_no_valid=allow_no_valid,
+    )

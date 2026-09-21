@@ -116,31 +116,41 @@ class ReidEvaluator(DatasetEvaluator):
                     for g_mod, g_name in modality_names.items():
                         q_mask = query_modalityids == q_mod
                         g_mask = gallery_modalityids == g_mod
-                        pair_cmc, pair_map, _ = evaluate_whu_asreid(
+                        pair_cmc, pair_map, pair_valid_queries = evaluate_whu_asreid(
                             query_features[q_mask], gallery_features[g_mask],
                             query_pids[q_mask], gallery_pids[g_mask],
                             query_camids[q_mask], gallery_camids[g_mask],
                             max_rank=50,
                             chunk_size=self.cfg.TEST.DISTMAT_CHUNK,
+                            allow_no_valid=True,
                         )
                         prefix = '{}->{}'.format(q_name, g_name)
                         self._results[prefix + '/mAP'] = pair_map * 100
                         self._results[prefix + '/Rank-1'] = pair_cmc[0] * 100
+                        self._results[prefix + '/valid_queries'] = pair_valid_queries
 
                 for q_view in ("Aerial", "Ground"):
                     for g_view in ("Aerial", "Ground"):
                         q_mask = query_viewids == q_view
                         g_mask = gallery_viewids == g_view
-                        pair_cmc, pair_map, _ = evaluate_whu_asreid(
+                        pair_cmc, pair_map, pair_valid_queries = evaluate_whu_asreid(
                             query_features[q_mask], gallery_features[g_mask],
                             query_pids[q_mask], gallery_pids[g_mask],
                             query_camids[q_mask], gallery_camids[g_mask],
                             max_rank=50,
                             chunk_size=self.cfg.TEST.DISTMAT_CHUNK,
+                            allow_no_valid=True,
                         )
                         prefix = '{}->{}'.format(q_view, g_view)
+                        if pair_valid_queries == 0:
+                            logger.warning(
+                                "WHU diagnostic %s has no valid query after same-camera "
+                                "filtering; reporting mAP/Rank-1 as NaN",
+                                prefix,
+                            )
                         self._results[prefix + '/mAP'] = pair_map * 100
                         self._results[prefix + '/Rank-1'] = pair_cmc[0] * 100
+                        self._results[prefix + '/valid_queries'] = pair_valid_queries
             return copy.deepcopy(self._results)
 
         if self.cfg.TEST.AQE.ENABLED:

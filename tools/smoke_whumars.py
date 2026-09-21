@@ -157,6 +157,18 @@ def check_evaluator_parity(uad_root):
     assert valid_queries == len(q_pids)
     assert our_cmc[0] == 1.0
 
+    empty_cmc, empty_map, empty_valid = evaluate_whu_asreid(
+        qf[:1], gf[:1],
+        np.asarray([0]), np.asarray([0]),
+        np.asarray([0]), np.asarray([0]),
+        max_rank=5,
+        chunk_size=1,
+        allow_no_valid=True,
+    )
+    assert empty_valid == 0
+    assert np.isnan(empty_map)
+    assert np.isnan(empty_cmc).all()
+
 
 def main():
     args = parse_args()
