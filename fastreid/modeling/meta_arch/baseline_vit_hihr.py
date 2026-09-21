@@ -62,6 +62,9 @@ class Baseline_vit_HiHR(nn.Module):
 
         self.camera_num = camera_num
         self.view_num = view_num
+        self.hihr_mode = str(cfg.MODEL.HIHR_MODE).lower()
+        if self.hihr_mode not in ("baseline", "full"):
+            raise ValueError("MODEL.HIHR_MODE must be 'baseline' or 'full'")
         self.use_cv_embed = bool(cfg.MODEL.BACKBONE.WITH_VIEW)
         if self.camera_num and self.view_num:
             self.cv_embed = nn.Parameter(torch.zeros(int(self.camera_num) * int(self.view_num), self.in_planes))
@@ -81,10 +84,26 @@ class Baseline_vit_HiHR(nn.Module):
         self.backbone = backbone
 
         # head
-        self.head_global = build_heads(cfg, dim=self.in_planes)
-        self.head_global_proj = build_heads(cfg, dim=self.in_planes_proj)
-        self.head_image_tree_1 = build_heads(cfg, dim=self.in_planes_proj)  # 3 * self.in_planes_proj
-        self.head_image_tree_2 = build_heads(cfg, dim=self.in_planes_proj)
+        def build_all_heads():
+            self.head_global = build_heads(cfg, dim=self.in_planes)
+            self.head_global_proj = build_heads(cfg, dim=self.in_planes_proj)
+            if self.hihr_mode == "full":
+                self.head_image_tree_1 = build_heads(cfg, dim=self.in_planes_proj)
+                self.head_image_tree_2 = build_heads(cfg, dim=self.in_planes_proj)
+
+        if cfg.MODEL.HEADS.MATCHED_INIT:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(int(cfg.SEED) + 1000)
+                self.head_global = build_heads(cfg, dim=self.in_planes)
+                torch.manual_seed(int(cfg.SEED) + 1001)
+                self.head_global_proj = build_heads(cfg, dim=self.in_planes_proj)
+                if self.hihr_mode == "full":
+                    torch.manual_seed(int(cfg.SEED) + 1002)
+                    self.head_image_tree_1 = build_heads(cfg, dim=self.in_planes_proj)
+                    torch.manual_seed(int(cfg.SEED) + 1003)
+                    self.head_image_tree_2 = build_heads(cfg, dim=self.in_planes_proj)
+        else:
+            build_all_heads()
 
         # loss
         self.loss_kwargs = loss_kwargs
@@ -140,17 +159,23 @@ class Baseline_vit_HiHR(nn.Module):
 
             outputs_global = self.head_global(global_feats.reshape(global_feats.shape[0], -1, 1, 1), targets)
             outputs_global_proj = self.head_global_proj(global_feats_proj.reshape(global_feats_proj.shape[0], -1, 1, 1), targets)
-            outputs_tree_eur_1 = self.head_image_tree_1(
-                tree_feats_eur[:, 0, :].reshape(tree_feats_eur[:, 0, :].shape[0], -1, 1, 1), targets)
-            outputs_tree_eur_2 = self.head_image_tree_2(
-                tree_feats_eur[:, 1, :].reshape(tree_feats_eur[:, 1, :].shape[0], -1, 1, 1), targets)
+            outputs_tree_eur_1 = None
+            outputs_tree_eur_2 = None
+            if self.hihr_mode == "full":
+                outputs_tree_eur_1 = self.head_image_tree_1(
+                    tree_feats_eur[:, 0, :].reshape(tree_feats_eur[:, 0, :].shape[0], -1, 1, 1), targets)
+                outputs_tree_eur_2 = self.head_image_tree_2(
+                    tree_feats_eur[:, 1, :].reshape(tree_feats_eur[:, 1, :].shape[0], -1, 1, 1), targets)
             losses_re = self.losses((outputs_global, outputs_global_proj), gt_labels=targets,
-                outputs_special=(outputs_tree_eur_1,outputs_tree_eur_2,), viewids=viewids)
+                outputs_special=(outputs_tree_eur_1, outputs_tree_eur_2) if self.hihr_mode == "full" else None,
+                viewids=viewids)
             losses_all = {**losses_all, **losses_re}
             return losses_all
         else:
             outputs_global = self.head_global(global_feats.reshape(global_feats.shape[0], -1, 1, 1))
             outputs_global_proj = self.head_global_proj(global_feats_proj.reshape(global_feats_proj.shape[0], -1, 1, 1))
+            if self.hihr_mode == "baseline":
+                return torch.cat((outputs_global, outputs_global_proj), dim=1)
             outputs_tree_eur_1 = self.head_image_tree_1(
                 tree_feats_eur[:, 0, :].reshape(tree_feats_eur[:, 0, :].shape[0], -1, 1, 1))
             outputs_tree_eur_2 = self.head_image_tree_2(

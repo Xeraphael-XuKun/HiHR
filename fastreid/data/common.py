@@ -37,6 +37,9 @@ class CommDataset(Dataset):
         pid = img_item[1]
         camid = img_item[2]
         viewid = img_item[3]
+        modality_names = {"RGB": 0, "IR": 1, "Thermal": 2}
+        modality = img_item[4] if len(img_item) > 4 else None
+        modalityid = modality_names.get(modality, -1) if isinstance(modality, str) else -1
         caption = img_item[5] if len(img_item) > 5 else ""
         img = read_image(img_path)
         if self.transform is not None: img = self.transform(img)
@@ -48,6 +51,7 @@ class CommDataset(Dataset):
             "targets": pid,
             "camids": camid,
             "viewids": viewid,
+            "modalityids": modalityid,
             "img_paths": img_path,
             "caption": caption,
         }

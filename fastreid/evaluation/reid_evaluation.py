@@ -19,6 +19,7 @@ from fastreid.utils.compute_dist import build_dist
 from .evaluator import DatasetEvaluator
 from .query_expansion import aqe
 from .rank_cylib import compile_helper
+from .whu_asreid import evaluate_whu_asreid
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,8 @@ class ReidEvaluator(DatasetEvaluator):
         self._cpu_device = torch.device('cpu')
 
         self._predictions = []
-        self._compile_dependencies()
+        if str(cfg.TEST.PROTOCOL).upper() != "WHU_AS_REID":
+            self._compile_dependencies()
 
     def reset(self):
         self._predictions = []
@@ -41,7 +43,9 @@ class ReidEvaluator(DatasetEvaluator):
         prediction = {
             'feats': outputs.to(self._cpu_device, torch.float32),
             'pids': inputs['targets'].to(self._cpu_device),
-            'camids': inputs['camids'].to(self._cpu_device)
+            'camids': inputs['camids'].to(self._cpu_device),
+            'modalityids': inputs.get('modalityids', torch.full_like(inputs['targets'], -1)).to(self._cpu_device),
+            'viewids': list(inputs.get('viewids', [])),
 
         }
         self._predictions.append(prediction)
@@ -61,14 +65,19 @@ class ReidEvaluator(DatasetEvaluator):
         features = []
         pids = []
         camids = []
+        modalityids = []
+        viewids = []
         for prediction in predictions:
             features.append(prediction['feats'])
             pids.append(prediction['pids'])
             camids.append(prediction['camids'])
+            modalityids.append(prediction['modalityids'])
+            viewids.extend(prediction['viewids'])
 
         features = torch.cat(features, dim=0)
         pids = torch.cat(pids, dim=0).numpy()
         camids = torch.cat(camids, dim=0).numpy()
+        modalityids = torch.cat(modalityids, dim=0).numpy()
         # query feature, person ids and camera ids
         query_features = features[:self._num_query]
         query_pids = pids[:self._num_query]
@@ -78,8 +87,61 @@ class ReidEvaluator(DatasetEvaluator):
         gallery_features = features[self._num_query:]
         gallery_pids = pids[self._num_query:]
         gallery_camids = camids[self._num_query:]
+        query_modalityids = modalityids[:self._num_query]
+        gallery_modalityids = modalityids[self._num_query:]
+        query_viewids = np.asarray(viewids[:self._num_query])
+        gallery_viewids = np.asarray(viewids[self._num_query:])
 
         self._results = OrderedDict()
+
+        if str(self.cfg.TEST.PROTOCOL).upper() == "WHU_AS_REID":
+            if self.cfg.TEST.AQE.ENABLED or self.cfg.TEST.RERANK.ENABLED or self.cfg.TEST.FLIP.ENABLED:
+                raise ValueError("WHU_AS_REID requires AQE, reranking, and test flip to be disabled")
+            cmc, mAP, valid_queries = evaluate_whu_asreid(
+                query_features, gallery_features,
+                query_pids, gallery_pids,
+                query_camids, gallery_camids,
+                max_rank=50,
+                chunk_size=self.cfg.TEST.DISTMAT_CHUNK,
+            )
+            for r in [1, 5, 10]:
+                self._results['Rank-{}'.format(r)] = cmc[r - 1] * 100
+            self._results['mAP'] = mAP * 100
+            self._results['valid_queries'] = valid_queries
+            self._results['metric'] = (mAP + cmc[0]) / 2 * 100
+
+            if self.cfg.TEST.WHU_DIAGNOSTICS:
+                modality_names = {0: "RGB", 1: "NIR", 2: "TIR"}
+                for q_mod, q_name in modality_names.items():
+                    for g_mod, g_name in modality_names.items():
+                        q_mask = query_modalityids == q_mod
+                        g_mask = gallery_modalityids == g_mod
+                        pair_cmc, pair_map, _ = evaluate_whu_asreid(
+                            query_features[q_mask], gallery_features[g_mask],
+                            query_pids[q_mask], gallery_pids[g_mask],
+                            query_camids[q_mask], gallery_camids[g_mask],
+                            max_rank=50,
+                            chunk_size=self.cfg.TEST.DISTMAT_CHUNK,
+                        )
+                        prefix = '{}->{}'.format(q_name, g_name)
+                        self._results[prefix + '/mAP'] = pair_map * 100
+                        self._results[prefix + '/Rank-1'] = pair_cmc[0] * 100
+
+                for q_view in ("Aerial", "Ground"):
+                    for g_view in ("Aerial", "Ground"):
+                        q_mask = query_viewids == q_view
+                        g_mask = gallery_viewids == g_view
+                        pair_cmc, pair_map, _ = evaluate_whu_asreid(
+                            query_features[q_mask], gallery_features[g_mask],
+                            query_pids[q_mask], gallery_pids[g_mask],
+                            query_camids[q_mask], gallery_camids[g_mask],
+                            max_rank=50,
+                            chunk_size=self.cfg.TEST.DISTMAT_CHUNK,
+                        )
+                        prefix = '{}->{}'.format(q_view, g_view)
+                        self._results[prefix + '/mAP'] = pair_map * 100
+                        self._results[prefix + '/Rank-1'] = pair_cmc[0] * 100
+            return copy.deepcopy(self._results)
 
         if self.cfg.TEST.AQE.ENABLED:
             logger.info("Test with AQE setting")

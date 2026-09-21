@@ -5,7 +5,6 @@
 """
 
 import logging
-import os
 
 import torch
 TORCH_MAJOR = int(torch.__version__.split('.')[0])
@@ -31,9 +30,6 @@ __all__ = [
     "build_reid_test_loader"
 ]
 
-# _root = os.getenv("FASTREID_DATASETS", "datasets")
-_root = "/yqw/DATA/"
-
 def _train_loader_from_config(cfg, *, train_set=None, transforms=None, sampler=None, **kwargs):
     if transforms is None:
         transforms = build_transforms(cfg, is_train=True)
@@ -41,7 +37,7 @@ def _train_loader_from_config(cfg, *, train_set=None, transforms=None, sampler=N
     if train_set is None:
         train_items = list()
         for d in cfg.DATASETS.NAMES:
-            data = DATASET_REGISTRY.get(d)(root=_root, **kwargs)
+            data = DATASET_REGISTRY.get(d)(root=cfg.DATASETS.ROOT, **kwargs)
             if comm.is_main_process():
                 data.show_train()
             train_items.extend(data.train)
@@ -69,6 +65,16 @@ def _train_loader_from_config(cfg, *, train_set=None, transforms=None, sampler=N
             sampler = samplers.ImbalancedDatasetSampler(train_set.img_items)
         elif sampler_name == "RandomIdentityModalitySampler":
             sampler = samplers.RandomIdentityModalitySampler(train_set.img_items, mini_batch_size, num_instance)
+        elif sampler_name == "StratifiedPKMViewSampler":
+            sampler = samplers.StratifiedPKMViewSampler(
+                train_set.img_items,
+                mini_batch_size,
+                num_instance,
+                num_cross_view_pids=cfg.DATALOADER.PKM_VIEW.NUM_CROSS_VIEW_PIDS,
+                num_ground_only_pids=cfg.DATALOADER.PKM_VIEW.NUM_GROUND_ONLY_PIDS,
+                num_modalities=cfg.DATALOADER.PKM_VIEW.NUM_MODALITIES,
+                seed=cfg.SEED,
+            )
         else:
             raise ValueError("Unknown training sampler: {}".format(sampler_name))
 
@@ -77,12 +83,13 @@ def _train_loader_from_config(cfg, *, train_set=None, transforms=None, sampler=N
         "sampler": sampler,
         "total_batch_size": cfg.SOLVER.IMS_PER_BATCH,
         "num_workers": cfg.DATALOADER.NUM_WORKERS,
+        "seed": cfg.SEED if sampler_name == "StratifiedPKMViewSampler" else None,
     }
 
 
 @configurable(from_config=_train_loader_from_config)
 def build_reid_train_loader(
-        train_set, *, sampler=None, total_batch_size, num_workers=0,
+        train_set, *, sampler=None, total_batch_size, num_workers=0, seed=None,
 ):
     """
     Build a dataloader for object re-identification with some default features.
@@ -96,6 +103,10 @@ def build_reid_train_loader(
 
     batch_sampler = torch.utils.data.sampler.BatchSampler(sampler, mini_batch_size, True)
 
+    generator = None
+    if seed is not None:
+        generator = torch.Generator()
+        generator.manual_seed(int(seed))
     train_loader = DataLoaderX(
         comm.get_local_rank(),
         dataset=train_set,
@@ -103,6 +114,7 @@ def build_reid_train_loader(
         batch_sampler=batch_sampler,
         collate_fn=fast_batch_collator,
         pin_memory=True,
+        generator=generator,
     )
 
     return train_loader
@@ -114,7 +126,7 @@ def _test_loader_from_config(cfg, *, dataset_name=None, test_set=None, num_query
 
     if test_set is None:
         assert dataset_name is not None, "dataset_name must be explicitly passed in when test_set is not provided"
-        data = DATASET_REGISTRY.get(dataset_name)(root=_root, **kwargs)
+        data = DATASET_REGISTRY.get(dataset_name)(root=cfg.DATASETS.ROOT, **kwargs)
         if comm.is_main_process():
             data.show_test()
         test_items = data.query + data.gallery

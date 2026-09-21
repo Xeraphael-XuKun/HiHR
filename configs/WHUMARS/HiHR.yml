@@ -1,0 +1,114 @@
+MODEL:
+  META_ARCHITECTURE: Baseline_vit_HiHR
+  META_MODEL: backbone
+  HIHR_MODE: full
+  PIXEL_MEAN: [127.5, 127.5, 127.5]
+  PIXEL_STD: [127.5, 127.5, 127.5]
+
+  BACKBONE:
+    NAME: build_clip_vit_backbone_hqformer
+    BACKBONE_TYPE: ViT-B-16
+    PRETRAIN: True
+    PRETRAIN_PATH: /mnt/cache/wanghanzhi/Datasets
+    VISION_STRIDE_SIZE: 16
+    FEAT_DIM: 512
+    NORM: BN
+    WITH_IBN: False
+    WITH_SE: False
+    WITH_NL: False
+    WITH_VIEW: False
+    WITH_FUSION: True
+    WITH_HIERARCHY: True
+    SCALING_FACTOR_I1: 0.5
+    SCALING_FACTOR_I2: 2.0
+    CURV_INIT: 1.0
+    SELECTED_LAYER: [5, 8, 12]
+
+  HEADS:
+    NAME: EmbeddingHead
+    NUM_CLASSES: 500
+    NORM: BN
+    WITH_BNNECK: True
+    POOL_LAYER: Identity
+    NECK_FEAT: before
+    CLS_LAYER: Linear
+    MATCHED_INIT: True
+
+  LOSSES:
+    NAME: ("CrossEntropyLoss", "TripletLoss")
+    CE:
+      EPSILON: 0.0
+      SCALE: 1.0
+    TRI:
+      MARGIN: 0.0
+      HARD_MINING: True
+      NORM_FEAT: False
+      SCALE: 1.0
+
+INPUT:
+  SIZE_TRAIN: [256, 128]
+  SIZE_TEST: [256, 128]
+  REA:
+    ENABLED: True
+    PROB: 0.5
+  FLIP:
+    ENABLED: True
+  PADDING:
+    ENABLED: True
+
+DATASETS:
+  ROOT: /mnt/cache/wanghanzhi/Datasets
+  NAMES: ("WHUMARS",)
+  TESTS: ("WHUMARS",)
+  CAMERANMU: 7
+  VIEWNMU: 2
+
+DATALOADER:
+  SAMPLER_TRAIN: StratifiedPKMViewSampler
+  NUM_INSTANCE: 2
+  NUM_WORKERS: 8
+  PKM_VIEW:
+    NUM_CROSS_VIEW_PIDS: 5
+    NUM_GROUND_ONLY_PIDS: 5
+    NUM_MODALITIES: 3
+
+SOLVER:
+  AMP:
+    ENABLED: True
+  OPT: Adam
+  MAX_EPOCH: 60
+  BASE_LR: 0.00035
+  HEADS_LR_FACTOR: 1.0
+  WEIGHT_DECAY: 0.0001
+  WEIGHT_DECAY_NORM: 0.0001
+  WEIGHT_DECAY_BIAS: 0.0001
+  BIAS_LR_FACTOR: 2.0
+  IMS_PER_BATCH: 60
+  SCHED: MultiStepLR
+  STEPS: [20, 30]
+  WARMUP_METHOD: linear
+  WARMUP_FACTOR: 0.1
+  WARMUP_ITERS: 100
+  FREEZE_ITERS: 0
+  CHECKPOINT_PERIOD: 10
+  CLIP_GRADIENTS:
+    ENABLED: True
+    CLIP_VALUE: 5.0
+
+TEST:
+  EVAL_PERIOD: 10
+  IMS_PER_BATCH: 384
+  METRIC: euclidean
+  PROTOCOL: WHU_AS_REID
+  DISTMAT_CHUNK: 4000
+  WHU_DIAGNOSTICS: False
+  FLIP:
+    ENABLED: False
+  AQE:
+    ENABLED: False
+  RERANK:
+    ENABLED: False
+
+SEED: 1234
+CUDNN_BENCHMARK: False
+OUTPUT_DIR: /mnt/cache/wanghanzhi/XK/HiHR/logs/WHUMARS/HiHR

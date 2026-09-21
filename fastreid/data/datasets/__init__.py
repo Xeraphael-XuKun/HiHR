@@ -40,6 +40,7 @@ from .g2apsreid import G2APS_ReID, G2APS_ReID_A2G, G2APS_ReID_G2A
 from .agreid import AG_ReID, AG_ReID_G2A
 from .agreidv2 import AG_ReID_v2_G2A, AG_ReID_v2
 from .lagper import LAGPeR, LAGPeR_A2G, LAGPeR_G2A, LAGPeR_G2AG
+from .whu_mars import WHUMARS
 # Vehicle re-id datasets
 from .veri import VeRi
 from .vehicleid import VehicleID, SmallVehicleID, MediumVehicleID, LargeVehicleID

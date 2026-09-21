@@ -139,6 +139,9 @@ class VisionTransformerHierarchy(nn.Module):
         self.with_view = cfg.MODEL.BACKBONE.WITH_VIEW
         self.with_fusion = cfg.MODEL.BACKBONE.WITH_FUSION
         self.with_hierarchy = cfg.MODEL.BACKBONE.WITH_HIERARCHY
+        self.hihr_mode = str(cfg.MODEL.HIHR_MODE).lower()
+        if self.hihr_mode not in ("baseline", "full"):
+            raise ValueError("MODEL.HIHR_MODE must be 'baseline' or 'full'")
         if backbone_type == 'ViT-B-16':
             self.in_planes = 768
             self.in_planes_proj = 512
@@ -150,41 +153,46 @@ class VisionTransformerHierarchy(nn.Module):
         clip_model = load_clip_to_cpu(pretrain, pretrain_path, backbone_type, self.h_resolution, self.w_resolution, self.vision_stride_size, self.with_view)
         self.pretrained_image_encoder = clip_model.visual
         self.enc_dtype = next(self.pretrained_image_encoder.parameters()).dtype
-        self.pretrained_text_encoder = TextEncoder(clip_model)
-        for module_param_name, value in self.pretrained_text_encoder.named_parameters():
-            value.requires_grad = False
+        if self.hihr_mode == "full":
+            self.pretrained_text_encoder = TextEncoder(clip_model)
+            for value in self.pretrained_text_encoder.parameters():
+                value.requires_grad = False
 
-        ###### Layers Select
-        self.selected_layer_indices = [i - 1 for i in cfg.MODEL.BACKBONE.SELECTED_LAYER] # [0 ~ 11]
-        self.vit_level_num = len(self.selected_layer_indices) #clip layer start with 0
+            ###### Layers Select
+            self.selected_layer_indices = [i - 1 for i in cfg.MODEL.BACKBONE.SELECTED_LAYER] # [0 ~ 11]
+            self.vit_level_num = len(self.selected_layer_indices) #clip layer start with 0
 
-        ###### Prompt
-        self.template_num = 3
-        self.text_prompt = PromptLearner(clip_model, ctx_init_std=0.02, n_shared=4, n_private=4)
+            ###### Prompt
+            self.template_num = 3
+            self.text_prompt = PromptLearner(clip_model, ctx_init_std=0.02, n_shared=4, n_private=4)
 
-        ###### Multi-granularity Fusion (TMF)
-        self.patch_fusion = AdaptiveWeightGenerator(d_model=self.in_planes_proj, num_heads=4, dtype=self.enc_dtype, qk_init="small")
-        self.prompt_fusion = AdaptiveWeightGenerator(d_model=self.in_planes_proj, num_heads=4, dtype=self.enc_dtype, qk_init="small")
-        self.prompt_fusion2 = AdaptiveWeightGenerator(d_model=self.in_planes_proj, num_heads=4, dtype=self.enc_dtype, qk_init="small")
-        self.patch_prompt_self_attn = ResidualAttentionBlock(d_model=self.in_planes_proj, n_head=4)
-        init_residual_attention_block(self.patch_prompt_self_attn, residual_scale=1e-3, zero_init_residual=False)
-        # self.fusion_project = MLP([self.in_planes_proj, self.in_planes_proj, self.in_planes_proj], activation="gelu", dropout=0.1)
-        self.norm_fusion = nn.LayerNorm(self.in_planes_proj)
-        self.norm_prompt = nn.LayerNorm(self.in_planes_proj)
+            ###### Multi-granularity Fusion (TMF)
+            self.patch_fusion = AdaptiveWeightGenerator(d_model=self.in_planes_proj, num_heads=4, dtype=self.enc_dtype, qk_init="small")
+            self.prompt_fusion = AdaptiveWeightGenerator(d_model=self.in_planes_proj, num_heads=4, dtype=self.enc_dtype, qk_init="small")
+            self.prompt_fusion2 = AdaptiveWeightGenerator(d_model=self.in_planes_proj, num_heads=4, dtype=self.enc_dtype, qk_init="small")
+            self.patch_prompt_self_attn = ResidualAttentionBlock(d_model=self.in_planes_proj, n_head=4)
+            init_residual_attention_block(self.patch_prompt_self_attn, residual_scale=1e-3, zero_init_residual=False)
+            self.norm_fusion = nn.LayerNorm(self.in_planes_proj)
+            self.norm_prompt = nn.LayerNorm(self.in_planes_proj)
 
-        ###### Hierarchical Hyperbolic Learning (HHL)
-        curv_init = float(cfg.MODEL.BACKBONE.CURV_INIT) #0.25 {0.1, 0.5, 1.0} 0.1085
-        self.log_curv = nn.Parameter(torch.tensor(curv_init, dtype=self.enc_dtype).log(), requires_grad=True)
-        self._curv_minmax = {"max": math.log(curv_init * 10),"min": math.log(curv_init / 10)}
+            ###### Hierarchical Hyperbolic Learning (HHL)
+            curv_init = float(cfg.MODEL.BACKBONE.CURV_INIT)
+            self.log_curv = nn.Parameter(torch.tensor(curv_init, dtype=self.enc_dtype).log(), requires_grad=True)
+            self._curv_minmax = {"max": math.log(curv_init * 10), "min": math.log(curv_init / 10)}
 
-        init_i1 = float(cfg.MODEL.BACKBONE.SCALING_FACTOR_I1) #0.2677
-        init_i2 = float(cfg.MODEL.BACKBONE.SCALING_FACTOR_I2) #1.000
-        init_i2 = max(init_i2, 1.0 + 1e-6)  # Avoid init_p == 1, which would make log(0) undefined.
-        self.log_scaling_factor_i1 = nn.Parameter(torch.tensor(init_i1, dtype=torch.float32).log())
-        self.log_scaling_factor_i2 = nn.Parameter(torch.tensor(init_i2 - 1.0, dtype=torch.float32).log())
+            init_i1 = float(cfg.MODEL.BACKBONE.SCALING_FACTOR_I1)
+            init_i2 = max(float(cfg.MODEL.BACKBONE.SCALING_FACTOR_I2), 1.0 + 1e-6)
+            self.log_scaling_factor_i1 = nn.Parameter(torch.tensor(init_i1, dtype=torch.float32).log())
+            self.log_scaling_factor_i2 = nn.Parameter(torch.tensor(init_i2 - 1.0, dtype=torch.float32).log())
 
     def forward(self, imgs=None, cv_embed=None, viewids=None, batched_inputs=None):
         B, C, H, W = imgs.shape  # B=64, C=3 H=256,W=128
+
+        if self.hihr_mode == "baseline":
+            _, x, xproj = self.pretrained_image_encoder(
+                imgs, cv_emb=None, hierarchical=False, use_invite=False
+            )
+            return x[:, 0], xproj[:, 0], None, None
 
         x, xproj, selected_layer, selected_layer_proj = self.pretrained_image_encoder(imgs, cv_emb=None,
             hierarchical=True, selected_layer_indices=self.selected_layer_indices, use_invite=False)  # start with layer 0
@@ -310,8 +318,8 @@ class VisionTransformerHierarchy(nn.Module):
         return protos[inv]
 
     def clamp_curv(self):
-        # with torch.no_grad():
-        self.log_curv.clamp_(**self._curv_minmax)
+        if hasattr(self, "log_curv"):
+            self.log_curv.clamp_(**self._curv_minmax)
 
 
 @BACKBONE_REGISTRY.register()

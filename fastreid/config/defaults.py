@@ -16,6 +16,9 @@ from .config import CfgNode as CN
 
 _C = CN()
 
+# Reproducible experiment seed. Each distributed rank adds its rank to this value.
+_C.SEED = 0
+
 # -----------------------------------------------------------------------------
 # MODEL
 # -----------------------------------------------------------------------------
@@ -23,6 +26,7 @@ _C.MODEL = CN()
 _C.MODEL.DEVICE = "cuda"
 _C.MODEL.META_ARCHITECTURE = "Baseline"
 _C.MODEL.META_MODEL = ""
+_C.MODEL.HIHR_MODE = "full"
 
 _C.MODEL.FREEZE_LAYERS = []
 _C.MODEL.MOMENTUM = 0.0
@@ -107,6 +111,7 @@ _C.MODEL.HEADS.POOL_LAYER = "GlobalAvgPool"
 
 # Classification layer type
 _C.MODEL.HEADS.CLS_LAYER = "Linear"  # ArcSoftmax" or "CircleSoftmax"
+_C.MODEL.HEADS.MATCHED_INIT = False
 
 # Margin and Scale for margin-based classification layer
 _C.MODEL.HEADS.MARGIN = 0.
@@ -253,6 +258,7 @@ _C.DATASETS = CN()
 _C.DATASETS.NAMES = ("Market1501",)
 # List of the dataset names for testing
 _C.DATASETS.TESTS = ("Market1501",)
+_C.DATASETS.ROOT = "/yqw/DATA/"
 # Combine trainset and testset joint training
 _C.DATASETS.COMBINEALL = False
 _C.DATASETS.CAMERANMU = 20
@@ -267,6 +273,12 @@ _C.DATALOADER.SAMPLER_TRAIN = "TrainingSampler"
 # Number of instance for each person
 _C.DATALOADER.NUM_INSTANCE = 4
 _C.DATALOADER.NUM_WORKERS = 8
+
+# Stratified PKM-View sampler used by WHU-MARS.
+_C.DATALOADER.PKM_VIEW = CN()
+_C.DATALOADER.PKM_VIEW.NUM_CROSS_VIEW_PIDS = 5
+_C.DATALOADER.PKM_VIEW.NUM_GROUND_ONLY_PIDS = 5
+_C.DATALOADER.PKM_VIEW.NUM_MODALITIES = 3
 
 # For set re-weight
 _C.DATALOADER.SET_WEIGHT = []
@@ -351,6 +363,9 @@ _C.TEST.EVAL_PERIOD = 20
 # Number of images per batch across all machines.
 _C.TEST.IMS_PER_BATCH = 64
 _C.TEST.METRIC = "cosine"
+_C.TEST.PROTOCOL = "standard"
+_C.TEST.DISTMAT_CHUNK = 4000
+_C.TEST.WHU_DIAGNOSTICS = False
 _C.TEST.ROC = CN({"ENABLED": False})
 _C.TEST.FLIP = CN({"ENABLED": False})
 

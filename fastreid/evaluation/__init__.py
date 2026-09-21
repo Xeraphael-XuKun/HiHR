@@ -1,5 +1,6 @@
 from .evaluator import DatasetEvaluator, inference_context, inference_on_dataset
 from .reid_evaluation import ReidEvaluator
+from .whu_asreid import evaluate_whu_asreid
 from .clas_evaluator import ClasEvaluator
 from .testing import print_csv_format, verify_results
 
