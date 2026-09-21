@@ -29,10 +29,17 @@ checkpoints/
 *.onnx
 
 # data
-#data/
-#datasets/
+/data/
+/datasets/
 *.npy
 *.npz
+
+# additional model and archive artifacts
+*.safetensors
+*.bin
+*.tar
+*.tar.gz
+*.zip
 
 # system
 .DS_Store
