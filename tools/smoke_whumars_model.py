@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from fastreid.config import get_cfg
 from fastreid.engine import DefaultTrainer
+from fastreid.utils.params import ContiguousParams
 
 
 def parse_args():
@@ -47,12 +48,17 @@ def main():
 
     model = DefaultTrainer.build_model(cfg)
     model.train()
-    model.zero_grad(set_to_none=True)
+    optimizer, param_wrapper = DefaultTrainer.build_optimizer(cfg, model)
+    optimizer.zero_grad(set_to_none=False)
+    tracked_weight = model.head_global.weight.detach().clone()
+    grad_scaler = torch.cuda.amp.GradScaler(
+        enabled=cfg.SOLVER.AMP.ENABLED, init_scale=1024.0
+    )
     with torch.cuda.amp.autocast(enabled=cfg.SOLVER.AMP.ENABLED):
         losses = model(batch)
         total_loss = sum(losses.values())
     assert torch.isfinite(total_loss), losses
-    total_loss.backward()
+    grad_scaler.scale(total_loss).backward()
 
     baseline_keys = {"loss_CE1", "loss_CE2", "loss_Tri1", "loss_Tri2"}
     full_keys = baseline_keys | {
@@ -71,7 +77,12 @@ def main():
         assert any(finite_gradient(p) for p in model.backbone.patch_fusion.parameters())
         assert any(finite_gradient(p) for p in model.backbone.text_prompt.parameters())
 
-    model.zero_grad(set_to_none=True)
+    grad_scaler.step(optimizer)
+    grad_scaler.update()
+    if isinstance(param_wrapper, ContiguousParams):
+        param_wrapper.assert_buffer_is_valid()
+    assert not torch.equal(tracked_weight, model.head_global.weight.detach())
+    optimizer.zero_grad(set_to_none=False)
     del batch, losses, total_loss
     torch.cuda.empty_cache()
     model.eval()
